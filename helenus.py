@@ -39,6 +39,20 @@ class Table(object):
         dict: 'json'
     }
 
+    def __init__(self, connection, name):
+        logging.info("Creating new table object for {}".format(name))
+        self.connection = connection
+        self.table_name = name
+        if self._exists():
+            logging.info("Table already exists")
+        else:
+            logging.info("Creating table")
+            cursor = self.connection.cursor()
+            cursor.execute("CREATE TABLE {} ()".format(self.table_name))
+            self.connection.commit()
+        logging.info("Table contains the following columns: %s",
+                     self.columns())
+
     def _exists(self):
         stmt = """
             SELECT EXISTS(
@@ -70,19 +84,6 @@ class Table(object):
         cursor = self.connection.cursor()
         cursor.execute(stmt)
 
-    def __init__(self, connection, name):
-        logging.info("Creating new table object for {}".format(name))
-        self.connection = connection
-        self.table_name = name
-        if self._exists():
-            logging.info("Table already exists")
-        else:
-            logging.info("Creating table")
-            cursor = self.connection.cursor()
-            cursor.execute("CREATE TABLE {} ()".format(self.table_name))
-            self.connection.commit()
-        logging.info("Table contains the following columns: %s", self.columns())
-
     def insert(self, obj):
         stmt = "INSERT INTO {} ".format(self.table_name)
         for key, value in obj.items():
@@ -96,19 +97,27 @@ class Table(object):
         stmt += "(" + ",".join("%({})s".format(field) for field in obj.keys()) + ")"
         logging.debug(stmt)
         cursor = self.connection.cursor()
-        cursor.execute(stmt, obj)
+        _cols = self.columns()
+        cursor.execute(stmt, {
+            k: (json.dumps(v) if _cols[k] == 'json' else v)
+            for k, v in obj.items()
+        })
         self.connection.commit()
 
     def query(self, *args):
         cursor = self.connection.cursor(cursor_factory=RealDictCursor)
         stmt = "SELECT * FROM %s" % self.table_name
-        if len(args):
-            stmt += " WHERE "
-            stmt += " AND ".join("{} {} %({})s".format(f.name, f.op, f.name) for f in args)
-        fmt_values = {f.name: f.value for f in args}
-        logging.debug("Query: %s", stmt)
-        logging.debug("Arguments: %s", fmt_values)
-        cursor.execute(stmt, fmt_values)
+        if all(isinstance(f, Field) for f in args):
+            if len(args):
+                stmt += " WHERE "
+                stmt += " AND ".join("{} {} %({})s".format(f.name, f.op, f.name) for f in args)
+            fmt_values = {f.name: f.value for f in args}
+            logging.debug("Query: %s", stmt)
+            logging.debug("Arguments: %s", fmt_values)
+            cursor.execute(stmt, fmt_values)
+        elif len(args) == 1 and isinstance(args[0], str):
+            stmt += " WHERE " + args[0]
+            cursor.execute(stmt)
         return cursor.fetchall()
 
     def truncate(self):
@@ -143,6 +152,16 @@ class Field(object):
         self.op = "<"
         return self
 
+    def greater_or_equal(self, value):
+        self.value = value
+        self.op = ">="
+        return self
+
+    def less_or_equal(self, value):
+        self.value = value
+        self.op = "<="
+        return self
+
 
 if __name__ == '__main__':
     connection = Helenus(username='postgres', password='postgres',
@@ -155,4 +174,7 @@ if __name__ == '__main__':
     print(table.query(Field("floating_point").less_than(2)))
     print(table.query(Field("integer").equals(1),
                       Field('string').equals('stuff')))
+    table.insert({"list": ['one, two']})
+    print(table.query(Field("list").exists()))
+    print(table.query("string = 'stuff'"))
     connection.close()
