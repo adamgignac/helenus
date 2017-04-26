@@ -1,7 +1,7 @@
 """
 Schemaless Postgres connections.
 
-Get the flexibility of Mongo or Cassandra with the
+Get the flexibility of Mongo with the
 ACID-compliance and SQL queries of Postgres.
 """
 import psycopg2
